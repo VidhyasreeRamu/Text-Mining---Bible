@@ -1,0 +1,268 @@
+---
+title: "Biblical Proportions"
+author: "Vidhyasree Ramu"
+output: html_document
+---
+
+
+
+In this project, I will analyze the text of the bible. The ascii version resides in the file "ascii_bible.txt"
+
+## Read in the file, removing the top two lines which contains the book tite and storing each verse in a text array. 
+```{r}
+library(data.table)
+path = "ascii_bible.txt"
+asci_bible = readChar(path,file.info(path)$size)
+asci_bible = array(unlist(strsplit(asci_bible,"\n\n")))
+asci_bible = asci_bible[2:length(asci_bible)]
+asci_bible = gsub(x = asci_bible,pattern = "\n\\s*",replacement = " ")
+asci_bible = asci_bible[!grepl(pattern = "Book \\d{2}",asci_bible)]
+head(asci_bible,20)
+#\\d{3}:\\d{3} 
+
+
+```
+
+## Total number of verses 
+```{r}
+length(asci_bible)
+```
+
+## Each verse has the number "CCC:VVV" where CCC is the chapter number and VVV is the verse number. Lets count the number of chapters
+```{r}
+verse_counts = substring(asci_bible,first = 1,last = 7)
+verse_counts = data.frame(do.call(rbind, strsplit(verse_counts, ":", fixed=TRUE)))
+colnames(verse_counts) = c("Chapter","Verse")
+verse_counts$Chapter = as.numeric(verse_counts$Chapter)
+verse_counts$Verse = as.numeric(verse_counts$Verse)
+unique_chapters = list()
+for (x in 2:length(verse_counts$Chapter)-1){
+  #print(x)
+  if(((verse_counts$Chapter[x]) >= (verse_counts$Chapter[x+1])) && ((verse_counts$Verse[x]) > (verse_counts$Verse[x+1]))){
+    
+    unique_chapters[[length(unique_chapters)+1]] = (verse_counts$Chapter[x])
+  }
+}
+unique_chapters[[length(unique_chapters)+1]] = verse_counts$Chapter[length(verse_counts$Chapter)]
+chapter_numbers = sum(as.numeric(unique_chapters))
+cat("Number of chapters in the asci bible are:",chapter_numbers)
+
+```
+
+
+## Extracing an array for the verse numbers, and also one for the verse text.
+```{r}
+verse_text = substring(asci_bible,first = 9,last = 1000000L)
+verse_text_df = as.data.frame(verse_text)
+verse_numbers = matrix(verse_counts$Verse)
+```
+
+
+## Lower case all text.
+```{r}
+verse_text_lower = tolower(verse_text)
+```
+
+## Converting the text of all verses into a Corpus using the **tm** package. 
+```{r}
+library(tm)
+verse_corpus = Corpus(VectorSource(verse_text_lower))
+```
+
+## Remove all punctuation.Counting the number of unique words in the bible? 
+```{r}
+verse_corpus_no_punctuation = tm_map(verse_corpus,removePunctuation)
+tdm = TermDocumentMatrix(verse_corpus_no_punctuation,control=list(minWordLength=1))
+print(tdm)
+sprint("We can see from TDM terms that we have %s number of unique words",nrow(tdm))
+```
+
+
+## Remove all stopwords. Now how many unique terms are there? 
+```{r}
+verse_corpus_no_stop = tm_map(verse_corpus_no_punctuation,removeWords,stopwords("english"))
+tdm_stp_punc = TermDocumentMatrix(verse_corpus_no_stop,control=list(minWordLength=1))
+print(tdm_stp_punc)
+sprintf("We can notice that number of terms have reduced from 12651 to %s",nrow(tdm_stp_punc))
+```
+
+
+## Stemming the text, to remove multiplicity of similar words of the same root. 
+```{r}
+verse_corpus_stemed = tm_map(verse_corpus_no_stop,stemDocument)
+print(lapply(verse_corpus_stemed, as.character)[10:15])
+```
+
+
+## The number of distinct words in the bible, after stemming
+```{r}
+tdm_stemed = TermDocumentMatrix(verse_corpus_stemed,control = list(minWordLength=1))
+print(tdm_stemed)
+print("Now the terms has reduced to 9215")
+```
+
+
+##Finding the 50 most common words in the bible.
+```{r}
+tdm_matrix_freq = as.matrix(tdm_stemed)
+freq_word = rowSums(tdm_matrix_freq)
+ord_words = order(freq_word)
+freq_word[tail(ord_words)]
+words_df = data.frame(freq_word[tail(ord_words,n=50)])
+print("The 50 most common words in bible are as below :")
+print(words_df)
+```
+
+
+## Making a wordcloud of the top 100 words in the bible. 
+```{r}
+library(wordcloud)
+top_100_matrix = (freq_word[tail(ord_words,n=100)])
+wc_count = sort(top_100_matrix)
+word_names = names(top_100_matrix)
+wordcloud(word_names,wc_count)
+```
+
+
+## Mood score the original text of the bible 
+```{r}
+#data.frame(text = sapply(verse_corpus_no_stop, as.character), stringsAsFactors = FALSE)
+library(textreg)
+library(dplyr)
+library(tidytext)
+temp_text = textreg::convert.tm.to.character(verse_corpus_no_stop)
+
+tdm = TermDocumentMatrix(verse_corpus_no_stop,control=list(minWordLength=1))
+ap_td = tidy(tdm)
+#Using Harvard Inquirer Dictionary (as stemming is do)
+HIDict = readLines("inqdict.txt")
+dict_pos = HIDict[grep("Pos",HIDict)]
+poswords = NULL
+for (s in dict_pos) {
+	s = strsplit(s,"#")[[1]][1]
+	poswords = c(poswords,strsplit(s," ")[[1]][1])
+}
+dict_neg = HIDict[grep("Neg",HIDict)]
+negwords = NULL
+for (s in dict_neg) {
+	s = strsplit(s,"#")[[1]][1]
+	negwords = c(negwords,strsplit(s," ")[[1]][1])
+}
+poswords = tolower(poswords)
+negwords = tolower(negwords)
+poswords = unique(poswords)
+negwords = unique(negwords)
+
+posmatch = match(ap_td$term,poswords)
+numposmatch = length(posmatch[which(posmatch>0)])
+negmatch = match(ap_td$term,negwords)
+numnegmatch = length(negmatch[which(negmatch>0)])
+print(c(numposmatch,numnegmatch))
+
+```
+```{r}
+library(dplyr)
+library(tidytext)
+tdm = TermDocumentMatrix(verse_corpus_no_stop,control=list(minWordLength=1))
+ap_td = tidy(tdm)
+ap_sentiments = ap_td %>%
+  inner_join(get_sentiments("bing"), by = c(term = "word"))
+ap_sentiments
+
+library(tidyr)
+ap_sentiments %>%
+  count(document, sentiment, wt = count) %>%
+  ungroup() %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative) %>%
+  arrange(sentiment)
+
+library(ggplot2)
+
+ap_sentiments %>%
+  count(sentiment, term, wt = count) %>%
+  ungroup() %>%
+  filter(n >= 150) %>%
+  mutate(n = ifelse(sentiment == "negative", -n, n)) %>%
+  mutate(term = reorder(term, n)) %>%
+  ggplot(aes(term, n, fill = sentiment)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ylab("Contribution to sentiment")
+```
+
+
+## Summarizing the bible into less than 500 verses using jacard similarity.
+```{r}
+library(dplyr)
+bible_text_df = dplyr::bind_cols(verse_counts,verse_text_df)
+bible_chapter_df = aggregate(bible_text_df$verse_text ~ bible_text_df$Chapter,FUN = c)
+
+
+library(LSAfun)
+library(textreg)
+text_summary = function(text, n) {
+  m = length(text)  # No of sentences in input
+  jaccard = matrix(0,m,m)  #Store match index
+  for (i in 1:m) {
+    for (j in i:m) {
+      a = text[i]; aa = unlist(strsplit(a," "))
+      b = text[j]; bb = unlist(strsplit(b," "))
+      jaccard[i,j] = length(intersect(aa,bb))/
+                          length(union(aa,bb))
+      jaccard[j,i] = jaccard[i,j]
+    }
+  }
+  similarity_score = rowSums(jaccard)
+  res = sort(similarity_score, index.return=TRUE,
+          decreasing=TRUE)
+  idx = res$ix[1:n]
+  summary = text[idx]
+}
+
+print("SUMMARY")
+bible_chapters_list = (bible_chapter_df$`bible_text_df$verse_text`)
+bible_chapters_list_1 = bible_chapters_list[[1]]
+res = text_summary(bible_chapters_list_1,5)
+print(res)
+```
+
+
+## Topic Modelling: Finding the main 3 topics in the bible, and the top 25 words in each topic. 
+```{r}
+dtm1 <- DocumentTermMatrix(verse_corpus_stemed, control=list(minWordLength=1))
+```
+
+```{r}
+#Set parameters for Gibbs sampling
+burnin = 4000
+iter = 2000
+thin = 500
+seed = list(2003,5,63,100001,765)
+nstart = 5
+best = TRUE
+
+#Number of topics
+k = 3
+```
+
+```{r}
+#Run LDA
+library(topicmodels)
+res <-LDA(dtm1, k, method="Gibbs", control = list(nstart = nstart, seed = seed, best = best, burnin = burnin, iter = iter, thin = thin))
+
+
+#Show topics
+res.topics = as.matrix(topics(res))
+
+#Show top terms
+res.terms = as.matrix(terms(res,25))
+print(res.terms)
+```
+## Interpretation of each topic
+Topic 1
+Topic 1 - (2 Chronicles Chapter 1: 9 - 11) This is the prayer from King Solomon to God asking for God's promise made to King Solomon's father King David to be fulfilled. In this prayer King Solomon asks for God's help to give him more wisdom and knowledge. He does not ask for riches, wealth, honor or life of the enemy. 
+
+Topic 2 - (Matthew Chapter 16: 17 - 28) This article talks about how Peter declares that Jesus is Messiah and then finally Jesus predicts his own death. Here Jesus talks about what value it is for a man to gain the whole earth and lose his own heart. He talks about how when someone trusts in him, he will be saved from sin and that the son of God will return in all glory and reward each person according to what they have done.  
+
+Topic 3 - (2 Samuel Chapter 12: 1 - 14) Nathan rebukes King David - Here Nathan talks about a parable where a particular rich man takes advantage of a poor person by taking his lamb. The parable talks about 2 priests and how King David has treated the children of Isreal - Judah just like the rich priest.
